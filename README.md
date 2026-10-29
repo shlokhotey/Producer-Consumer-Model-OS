@@ -1,3 +1,4 @@
+<img width="1382" height="837" alt="Screenshot 2026-10-29 211057" src="https://github.com/user-attachments/assets/9561be47-d76c-447c-9e04-b6531958f3b9" />
 # Roti Counter: Producer-Consumer Problem
 
 A wedding tandoori roti counter used to explain the producer-consumer problem.

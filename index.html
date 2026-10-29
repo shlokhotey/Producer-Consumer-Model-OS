@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roti Counter: Producer-Consumer Simulator</title>
+<style>
+:root{--bg:#f3f5f7;--card:#fff;--ink:#18212b;--mute:#5f6d7b;--line:#d9dfe5;--chef:#0b7285;--guest:#b0246b;--roti:#f0a30a;--ok:#2f9e44;--bad:#d9372b;--wait:#3b6fd4;--done:#8a95a1}
+@media (prefers-color-scheme:dark){:root{--bg:#10151b;--card:#1a212a;--ink:#e8edf2;--mute:#94a1af;--line:#2d3743;--chef:#3bb5cc;--guest:#ee6fb0;--roti:#f6b72e;--ok:#5fcf75;--bad:#ff7a6e;--wait:#7da6ff;--done:#6c7783}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+main{max-width:1050px;margin:0 auto;padding:22px 16px 60px}
+h1{font-size:26px;margin:0 0 4px}h2{font-size:16px;margin:0 0 10px}
+.sub{color:var(--mute);margin:0 0 18px}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+label{color:var(--mute);font-size:14px}
+input[type=number]{width:60px;padding:5px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+button{padding:7px 14px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit;cursor:pointer}
+button.primary{background:var(--wait);border-color:var(--wait);color:#fff}
+button:disabled{opacity:.5;cursor:default}
+button:focus-visible,input:focus-visible{outline:2px solid var(--wait);outline-offset:2px}
+.stage{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:14px}
+@media(max-width:800px){.stage{grid-template-columns:1fr}}
+.col h3{margin:0 0 8px;font-size:15px}
+.th{border:1px solid var(--line);border-left-width:5px;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:14px}
+.th.chef{border-left-color:var(--chef)}.th.guest{border-left-color:var(--guest)}
+.th b{display:block}
+.st{display:flex;gap:6px;align-items:center;color:var(--mute)}
+.dot{width:10px;height:10px;border-radius:50%;flex:none}
+.bar{height:5px;background:var(--line);border-radius:3px;margin-top:6px;overflow:hidden}
+.bar i{display:block;height:100%}
+.plate{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:6px 0 4px}
+.slot{width:56px;text-align:center}
+.cell{height:56px;border:2px dashed var(--line);border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700}
+.cell.full{background:var(--roti);border:2px solid var(--roti);color:#2b1d00}
+.ptr{height:18px;font-size:12px;color:var(--mute)}
+.sems{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px;text-align:center}
+.sems div{border:1px solid var(--line);border-radius:8px;padding:6px}
+.sems strong{display:block;font-size:22px}
+.lock.free strong{color:var(--ok)}.lock.held strong{color:var(--bad)}
+.log{margin:0;padding:10px;background:var(--bg);border-radius:6px;font:13px/1.6 Consolas,monospace;height:220px;overflow:auto}
+.msg{margin-top:10px;padding:8px 10px;border-radius:6px;background:color-mix(in srgb,var(--bad) 14%,transparent);display:none}
+.legend span{margin-right:14px;color:var(--mute);font-size:13px}
+</style>
+</head>
+<body>
+<main>
+<h1>Roti Counter: Producer-Consumer Simulator</h1>
+<p class="sub">Chefs bake rotis and put them on a small plate. Guests take them off. Semaphores and a mutex keep the plate safe, exactly like the C program.</p>
+
+<section>
+  <div class="row">
+    <label>Plate size <input type="number" id="cN" min="1" max="10" value="5"></label>
+    <label>Chefs <input type="number" id="cC" min="1" max="5" value="2"></label>
+    <label>Rotis per chef <input type="number" id="cP" min="1" max="20" value="6"></label>
+    <label>Guests <input type="number" id="cG" min="1" max="8" value="4"></label>
+    <label>Rotis per guest <input type="number" id="cE" min="1" max="20" value="3"></label>
+    <button id="apply">Apply and reset</button>
+  </div>
+  <div class="msg" id="mismatch" style="display:block;background:none;padding:6px 0 0;color:var(--mute)"></div>
+</section>
+
+<section>
+  <div class="row" style="margin-bottom:12px">
+    <button id="play" class="primary">Play</button>
+    <button id="step">Step</button>
+    <button id="reset">Reset</button>
+    <label>Speed <input type="range" id="spd" min="80" max="1200" value="500" style="direction:rtl"></label>
+    <b id="tick" style="margin-left:auto">Tick 0</b>
+  </div>
+  <div class="stage">
+    <div class="col"><h3>Chefs (producers)</h3><div id="chefs"></div></div>
+    <div class="col">
+      <h3>Counter plate (circular buffer)</h3>
+      <div class="plate" id="plate"></div>
+      <div class="sems">
+        <div><span>empty slots</span><strong id="sE">0</strong><small>chef waits at 0</small></div>
+        <div><span>full slots</span><strong id="sF">0</strong><small>guest waits at 0</small></div>
+        <div class="lock free" id="lk"><span>plate lock</span><strong id="sL">free</strong><small id="sLo">&nbsp;</small></div>
+      </div>
+      <div class="sems" style="grid-template-columns:1fr 1fr 1fr">
+        <div><span>made</span><strong id="mMade">0</strong></div>
+        <div><span>eaten</span><strong id="mEat">0</strong></div>
+        <div><span>on plate</span><strong id="mCnt">0</strong></div>
+      </div>
+    </div>
+    <div class="col"><h3>Guests (consumers)</h3><div id="guests"></div></div>
+  </div>
+  <div class="msg" id="stuck"></div>
+  <div class="legend" style="margin-top:10px"><span style="color:var(--ok)">&#9679; working</span><span style="color:var(--wait)">&#9679; baking / eating</span><span style="color:var(--bad)">&#9679; blocked</span><span>&#9679; finished</span></div>
+</section>
+
+<section><h2>Event log</h2><pre class="log" id="log"></pre></section>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+let C,S,timer=null;
+const rnd=(a,b)=>a+Math.floor(Math.random()*(b-a+1));
+
+function init(){
+  stop();
+  const g=id=>Math.max(1,Math.min(+$(id).max,Math.floor(+$(id).value)||1));
+  C={N:g("cN"),chefs:g("cC"),per:g("cP"),guests:g("cG"),eat:g("cE")};
+  ["cN","cC","cP","cG","cE"].forEach((id,i)=>$(id).value=[C.N,C.chefs,C.per,C.guests,C.eat][i]);
+  S={tick:0,empty:C.N,full:0,lock:null,buf:Array(C.N).fill(null),inn:0,out:0,count:0,no:0,made:0,eaten:0,log:[],stuck:false,
+     chefs:Array.from({length:C.chefs},(_,i)=>({kind:"chef",name:"Chef "+(i+1),st:"baking",t:rnd(2,4),n:0,blocked:false})),
+     guests:Array.from({length:C.guests},(_,i)=>({kind:"guest",name:"Guest "+(i+1),st:"semwait",t:0,n:0,blocked:false}))};
+  const mk=C.chefs*C.per, ea=C.guests*C.eat;
+  $("mismatch").innerHTML=mk===ea?`Chefs make ${mk} rotis and guests eat ${ea}. The totals match, so every thread can finish.`
+    :`<b style="color:var(--bad)">Chefs make ${mk} but guests want ${ea}.</b> ${mk<ea?"Some guests will wait forever for a roti that never comes.":"Chefs will end up stuck with a full plate and nobody to eat."} This is what happens in the C program if the totals do not match.`;
+  $("stuck").style.display="none";
+  log("Counter open. Plate holds "+C.N+" rotis.");
+  render();
+}
+function log(m){S.log.push(`[${String(S.tick).padStart(3," ")}] ${m}`)}
+
+function step(){
+  if(S.stuck)return;
+  S.tick++;
+  const all=[...S.chefs,...S.guests].sort(()=>Math.random()-.5);
+  for(const th of all){
+    th.blocked=false;
+    if(th.st==="done")continue;
+    if(th.kind==="chef"){
+      if(th.st==="baking"){if(--th.t<=0){th.st="semwait"}}
+      else if(th.st==="semwait"){if(S.empty>0){S.empty--;th.st="lockwait";log(`${th.name} sem_wait(empty) passed, found a free spot`)}else th.blocked=true}
+      else if(th.st==="lockwait"){if(!S.lock){S.lock=th.name;th.st="critical";log(`${th.name} locked the plate`)}else th.blocked=true}
+      else if(th.st==="critical"){
+        const r=++S.no;S.buf[S.inn]=r;S.inn=(S.inn+1)%C.N;S.count++;S.made++;th.n++;
+        S.lock=null;S.full++;log(`${th.name} placed roti #${r}, plate has ${S.count}`);
+        if(th.n>=C.per){th.st="done";log(`${th.name} is done for the night`)}else{th.st="baking";th.t=rnd(2,4)}
+      }
+    }else{
+      if(th.st==="semwait"){if(S.full>0){S.full--;th.st="lockwait";log(`${th.name} sem_wait(full) passed, a roti is ready`)}else th.blocked=true}
+      else if(th.st==="lockwait"){if(!S.lock){S.lock=th.name;th.st="critical";log(`${th.name} locked the plate`)}else th.blocked=true}
+      else if(th.st==="critical"){
+        const r=S.buf[S.out];S.buf[S.out]=null;S.out=(S.out+1)%C.N;S.count--;S.eaten++;th.n++;
+        S.lock=null;S.empty++;log(`${th.name} took roti #${r}, plate has ${S.count}`);
+        th.st="eating";th.t=rnd(3,6);
+      }
+      else if(th.st==="eating"){if(--th.t<=0){if(th.n>=C.eat){th.st="done";log(`${th.name} is full and leaves`)}else th.st="semwait"}}
+    }
+  }
+  const active=all.filter(t=>t.st!=="done");
+  if(!active.length){S.stuck=true;log("All rotis served. Counter closed.");show("Finished: every chef and guest is done.","var(--ok)")}
+  else if(active.every(t=>t.blocked&&t.st==="semwait")&&!S.lock){
+    S.stuck=true;log("DEADLOCK-LIKE STATE: everyone left is waiting on a semaphore.");
+    show("Stuck: every remaining thread is waiting on a semaphore and nothing can wake them.","var(--bad)");
+  }
+  if(S.stuck)stop();
+  render();
+}
+function show(t,c){const e=$("stuck");e.textContent=t;e.style.display="block";e.style.background=`color-mix(in srgb,${c} 16%,transparent)`}
+
+function status(th){
+  if(th.st==="done")return["Finished","var(--done)"];
+  if(th.kind==="chef"){
+    if(th.st==="baking")return["Baking the next roti ("+th.t+")","var(--wait)"];
+    if(th.st==="semwait")return th.blocked?["Plate is full, waiting for a space","var(--bad)"]:["Checking for a free space","var(--ok)"];
+    if(th.st==="lockwait")return th.blocked?["Waiting for "+S.lock+" to release the lock","var(--bad)"]:["Taking the lock","var(--ok)"];
+    return["Placing roti on plate","var(--ok)"];
+  }
+  if(th.st==="eating")return["Eating ("+th.t+")","var(--wait)"];
+  if(th.st==="semwait")return th.blocked?["No roti ready, waiting at counter","var(--bad)"]:["Checking for a roti","var(--ok)"];
+  if(th.st==="lockwait")return th.blocked?["Waiting for "+S.lock+" to release the lock","var(--bad)"]:["Taking the lock","var(--ok)"];
+  return["Taking roti from plate","var(--ok)"];
+}
+function card(th,total,color){
+  const [t,c]=status(th);
+  return `<div class="th ${th.kind}"><b>${th.name}</b><div class="st"><span class="dot" style="background:${c}"></span>${t}</div>
+  <small style="color:var(--mute)">${th.n} of ${total} ${th.kind==="chef"?"made":"eaten"}</small>
+  <div class="bar"><i style="width:${100*th.n/total}%;background:${color}"></i></div></div>`;
+}
+function render(){
+  $("tick").textContent="Tick "+S.tick;
+  $("chefs").innerHTML=S.chefs.map(t=>card(t,C.per,"var(--chef)")).join("");
+  $("guests").innerHTML=S.guests.map(t=>card(t,C.eat,"var(--guest)")).join("");
+  $("plate").innerHTML=S.buf.map((r,i)=>`<div class="slot"><div class="cell ${r?"full":""}">${r??""}</div>
+    <div class="ptr">${i===S.inn?"&#9650; in":""}${i===S.out?(i===S.inn?" / out":"&#9650; out"):""}</div></div>`).join("");
+  $("sE").textContent=S.empty;$("sF").textContent=S.full;
+  $("lk").className="lock "+(S.lock?"held":"free");$("sL").textContent=S.lock?"held":"free";$("sLo").innerHTML=S.lock||"&nbsp;";
+  $("mMade").textContent=S.made;$("mEat").textContent=S.eaten;$("mCnt").textContent=S.count;
+  const l=$("log");l.textContent=S.log.slice(-200).join("\n");l.scrollTop=l.scrollHeight;
+  $("step").disabled=S.stuck;$("play").disabled=S.stuck;
+}
+function stop(){clearInterval(timer);timer=null;$("play").textContent="Play"}
+function play(){
+  if(timer)return stop();
+  $("play").textContent="Pause";
+  timer=setInterval(step,+$("spd").value);step();
+}
+$("play").onclick=play;
+$("step").onclick=()=>{stop();step()};
+$("reset").onclick=init;
+$("apply").onclick=init;
+$("spd").oninput=()=>{if(timer){clearInterval(timer);timer=setInterval(step,+$("spd").value)}};
+init();
+</script>
+</body>
+</html>
